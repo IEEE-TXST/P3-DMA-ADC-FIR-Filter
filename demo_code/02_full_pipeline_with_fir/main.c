@@ -205,7 +205,7 @@ int main(void)
 
             for (i = 0U; i < BUFFER_SAMPLES; i += DECIMATION)
             {
-                PRINTF("%lu,%lu\r\n", raw[i], g_filteredBuffer[i]);
+                PRINTF("%u,%u\r\n", raw[i], g_filteredBuffer[i]);
             }
         }
     }

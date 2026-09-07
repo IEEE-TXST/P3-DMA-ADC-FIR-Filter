@@ -169,10 +169,10 @@ int main(void)
             g_readyIndex = -1;
             buf = g_pingPongBuffers[index];
 
-            PRINTF("buffer %ld ready (capture #%lu), first 8 raw samples: ", index, g_buffersCaptured);
+            PRINTF("buffer %d ready (capture #%u), first 8 raw samples: ", index, g_buffersCaptured);
             for (i = 0U; i < 8U; i++)
             {
-                PRINTF("%lu ", buf[i]);
+                PRINTF("%u ", buf[i]);
             }
             PRINTF("\r\n");
         }

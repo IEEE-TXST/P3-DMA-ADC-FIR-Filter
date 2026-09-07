@@ -2,6 +2,8 @@
 
 *Part of the P3 manual split. See `P3_1_Start_Here.md` for the full file list and how to use this manual.*
 
+**Before you start writing code:** create one new project for this entire project, via MCUXpresso's SDK wizard (P0 manual, Section 9): device `MKL26Z128VLH4`, board files = **Default board files**, project type = **C Project**, SDK Debug Console = **UART**. Every `demo_code/` folder mentioned below is something to read and copy logic from, never something to build on its own; a wizard-created project gives you MCUXpresso's normal managed build (no CMake, no `armgcc`, no relative-path setup), the same smooth build experience as any other wizard project in this series.
+
 ---
 
 ## 5. Additional Toolchain for This Project
