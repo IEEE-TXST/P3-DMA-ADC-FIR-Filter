@@ -10,6 +10,28 @@
  * understood first; open this only if stuck on the filtering or streaming
  * parts specifically.
  */
+
+/*
+ * WHAT: Builds on Session 1's DMA ping-pong acquisition by running each
+ * completed buffer through an 8-tap low-pass filter, then streaming both
+ * the raw and filtered values over UART as CSV for a Python script to plot
+ * live.
+ *
+ * HOW: Acquisition (TPM0 -> ADC -> DMA ping-pong) is identical to Session
+ * 1; see 01_dma_adc_ping_pong/main.c for that half. What's new here is
+ * ApplyFirFilter, run on the CPU once per completed buffer, and a decimated
+ * CSV print loop that sends only every 16th raw/filtered pair instead of
+ * every sample.
+ *
+ * WHY: This is the point of the whole project: DMA handles acquisition
+ * with zero CPU involvement, freeing the CPU to do something useful with
+ * the data, here, digital filtering, instead of spending its time on the
+ * mechanics of sampling. The FIR filter itself uses fixed-point (Q15) math
+ * rather than floating point, both because this build's Redlib config
+ * can't print floats (PRINTF_FLOAT_ENABLE=0) and because fixed-point
+ * integer math is dramatically faster on a Cortex-M0+, which has no
+ * hardware floating-point unit.
+ */
 #include "board.h"
 #include "pin_mux.h"
 #include "clock_config.h"
@@ -40,6 +62,22 @@
  * this is a linear-phase filter: every frequency is delayed by the same
  * amount, so the waveform's shape isn't smeared, only smoothed.
  */
+/*
+ * WHAT: The 8 fixed filter coefficients (the "taps") that define this
+ * filter's exact frequency response.
+ * HOW: Each coefficient is a real number between 0 and 1 (the filter's
+ * impulse response), scaled by 32768 (2^15) and rounded to the nearest
+ * integer, that's what "Q15" means: a fixed-point format where the value 1.0
+ * is represented as the integer 32768.
+ * WHY: Q15 fixed-point lets this filter run entirely in integer arithmetic
+ * (ApplyFirFilter below), which is both faster than floating point on this
+ * CPU and avoids the float-printing limitation mentioned above. The
+ * coefficients being symmetric (570, 2006, 5445, 8363, 8363, 5445, 2006,
+ * 570, a mirror image around the center) is what makes this a linear-phase
+ * filter: it delays every frequency component of the signal by the same
+ * amount, so the filtered waveform is a smoothed version of the original
+ * shape, not a phase-distorted one.
+ */
 #define FIR_TAPS 8U
 static const int32_t g_firCoeffsQ15[FIR_TAPS] = {570, 2006, 5445, 8363, 8363, 5445, 2006, 570};
 
@@ -48,6 +86,14 @@ static const int32_t g_firCoeffsQ15[FIR_TAPS] = {570, 2006, 5445, 8363, 8363, 54
    gives about 11.5 KB/sec. Decimating by 16 brings the reported rate down
    to 625 Hz, well within budget with headroom to spare. See the manual,
    Section 11, for the full bandwidth arithmetic. */
+/*
+ * WHAT: How many samples to skip between each one actually printed over
+ * UART.
+ * WHY: The ADC/DMA pipeline captures all 10,000 samples/second regardless;
+ * DECIMATION only controls how much of that gets sent over the (much
+ * slower) UART link for plotting. This is purely an output bandwidth
+ * decision, not a change to the filter or the acquisition rate itself.
+ */
 #define DECIMATION 16U
 
 static uint32_t g_bufferA[BUFFER_SAMPLES];
@@ -65,6 +111,18 @@ static volatile int32_t g_readyIndex = -1;
    of a glitch at every ping-pong boundary. Zero at startup, which causes
    one brief, expected startup transient on the very first buffer, exactly
    like any real filter the instant after power-on. */
+/*
+ * WHAT: Holds the last 7 raw samples from whichever buffer was processed
+ * most recently, and the buffer that receives this buffer's filtered
+ * output.
+ * WHY: An 8-tap filter needs the current sample plus its 7 predecessors to
+ * compute each output; at the very start of a new buffer, those
+ * predecessors live in the PREVIOUS buffer, which may already be getting
+ * overwritten by the next DMA transfer. g_firHistory solves this by saving
+ * just those 7 needed values before that happens, so filtering is
+ * continuous across the ping-pong boundary instead of having a small glitch
+ * at the start of every buffer.
+ */
 static uint32_t g_firHistory[FIR_TAPS - 1U];
 static uint32_t g_filteredBuffer[BUFFER_SAMPLES];
 
@@ -133,6 +191,15 @@ static void ConfigureDma(void)
     NVIC_EnableIRQ(DMA0_IRQn);
 }
 
+/*
+ * WHAT: Identical acquisition handoff logic to Session 1's DMA0_IRQHandler.
+ * WHY: Filtering deliberately does NOT happen inside this interrupt
+ * handler: it happens in main()'s loop instead (below), after the handler
+ * has already re-armed DMA into the other buffer. Keeping this handler
+ * fast and simple (re-arm, flag, done) means the more time-consuming FIR
+ * computation never delays the next buffer's acquisition or risks missing
+ * a DMA completion.
+ */
 void DMA0_IRQHandler(void)
 {
     uint8_t justFilled = g_fillIndex;
@@ -150,6 +217,26 @@ void DMA0_IRQHandler(void)
  * x[n-1] .. x[n-7] for the first few samples of a new buffer come from
  * g_firHistory (the tail of the previous buffer), not zeros, so the
  * filter has real signal history at every buffer boundary.
+ */
+/*
+ * WHAT: Computes the filtered value of every sample in rawBuffer, writing
+ * results into filteredBuffer, then saves this buffer's tail as history for
+ * next time.
+ * HOW: For each output sample n, sums 8 products (each tap's coefficient
+ * times the corresponding raw sample, counting backward from n) into a
+ * 32-bit accumulator, then shifts right by 15 once at the very end to
+ * undo the Q15 scaling. When n-k goes negative (meaning "before this
+ * buffer started"), the needed sample is pulled from g_firHistory instead
+ * of rawBuffer. After processing the whole buffer, the last 7 raw samples
+ * are copied into g_firHistory so the NEXT call to this function has
+ * correct history too.
+ * WHY: Accumulating all 8 products before the single right-shift, rather
+ * than shifting after each multiply, is a real fixed-point-math technique:
+ * shifting early would throw away precision on every single tap instead of
+ * just once at the end, compounding rounding error 8 times over instead of
+ * losing it only once. This is exactly the kind of fixed-point detail that
+ * makes integer DSP code look deceptively simple but actually embed real
+ * numerical-accuracy decisions.
  */
 static void ApplyFirFilter(const uint32_t *rawBuffer, uint32_t *filteredBuffer, uint32_t count)
 {
@@ -190,6 +277,17 @@ int main(void)
     ConfigureDma();
     ConfigureTpmTrigger();
 
+    /*
+     * WHAT: Waits for a completed buffer, filters it, then prints a
+     * decimated raw,filtered CSV stream.
+     * HOW: Same g_readyIndex flag-check pattern as Session 1, but each
+     * ready buffer now goes through ApplyFirFilter before printing, and the
+     * print loop steps by DECIMATION instead of printing every sample.
+     * WHY: Printing "raw,filtered" pairs (not just filtered values alone)
+     * is deliberate: it lets python/plot_fir_demo.py draw both signals on
+     * the same plot, making the filter's smoothing effect visually obvious
+     * by direct comparison, rather than just trusting the numbers.
+     */
     for (;;)
     {
         if (g_readyIndex >= 0)
