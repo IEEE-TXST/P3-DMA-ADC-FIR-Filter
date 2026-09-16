@@ -14,9 +14,13 @@ Everything from prior projects still applies. New for P3: **Python 3** with **py
 
 ## 6. This Chip's DMA, and Why Ping-Pong Has to Be Done in Software
 
-Larger Kinetis parts (the K-series) have an "eDMA" controller with hardware scatter-gather: you can chain multiple transfer descriptors together so the hardware itself automatically moves to the next buffer when one fills, with no CPU intervention at any point, including the handoff. The FRDM-KL26Z's MKL26Z128 has a simpler DMA controller, four channels, no descriptor chaining. Each channel has a source address register (SAR), destination address register (DAR), and a control register (DCR) that holds the transfer size and increment settings, plus a byte-count register (DSR_BCR) that counts down as the transfer proceeds and sets a "done" flag at zero.
+Larger Kinetis parts (the K-series) have an "eDMA" controller with hardware scatter-gather: you can chain multiple transfer descriptors together so the hardware itself automatically moves to the next buffer when one fills, with no CPU intervention at any point, including the handoff.
 
-This means true ping-pong, "the moment one buffer fills, start filling the other, automatically," isn't a single hardware mode you enable. It's a technique: when the DMA-complete interrupt fires, your ISR immediately reconfigures the channel (new destination address, reset byte count) to point at the *other* buffer, and restarts it, fast enough that no samples are lost between one buffer finishing and the next one starting. `demo_code/01_dma_adc_ping_pong/main.c`'s `DMA0_IRQHandler` does exactly this: it hands the buffer that just finished off to `main()` (Section 11's superloop-plus-flag pattern again), and in the same breath, points the DMA channel at the other buffer and calls `DMA_StartTransfer()` again.
+The FRDM-KL26Z's MKL26Z128 has a simpler DMA controller, four channels, no descriptor chaining. Each channel has a source address register (SAR), destination address register (DAR), and a control register (DCR) that holds the transfer size and increment settings, plus a byte-count register (DSR_BCR) that counts down as the transfer proceeds and sets a "done" flag at zero.
+
+This means true ping-pong, "the moment one buffer fills, start filling the other, automatically," isn't a single hardware mode you enable. It's a technique: when the DMA-complete interrupt fires, your ISR immediately reconfigures the channel (new destination address, reset byte count) to point at the *other* buffer, and restarts it, fast enough that no samples are lost between one buffer finishing and the next one starting.
+
+`demo_code/01_dma_adc_ping_pong/main.c`'s `DMA0_IRQHandler` does exactly this: it hands the buffer that just finished off to `main()` (Section 11's superloop-plus-flag pattern again), and in the same breath, points the DMA channel at the other buffer and calls `DMA_StartTransfer()` again.
 
 **One subtlety worth knowing, confirmed by reading the driver source directly, not assumed:** `DMA_SetTransferConfig()` only touches the size and increment bits in DCR; it does not disturb the enable-request or async-request bits set once at initial configuration. That's why the ISR doesn't need to re-enable those every time, only reconfigure the addresses, clear the "done" flag, and restart.
 
@@ -120,9 +124,13 @@ filteredBuffer[n] = (uint32_t)(acc >> 15);
 
 Two details worth understanding, not just copying:
 
-**The accumulator is 32-bit, and the `>> 15` (equivalent to dividing by 32768) happens exactly once, after all 8 taps are summed, not after each individual multiply.** Each `coefficient * sample` product is a full-precision 32-bit value; shifting after every tap would throw away low-order bits 8 separate times, accumulating rounding error. Shifting once, at the end, keeps the accumulated sum at full precision until the very last step, giving a materially more accurate result for the same amount of code.
+**The accumulator is 32-bit, and the `>> 15` (equivalent to dividing by 32768) happens exactly once, after all 8 taps are summed, not after each individual multiply.** Each `coefficient * sample` product is a full-precision 32-bit value; shifting after every tap would throw away low-order bits 8 separate times, accumulating rounding error.
 
-**The first 7 samples of every new buffer need history from the *previous* buffer, or every buffer boundary produces an audible or visible glitch.** Convolution needs each sample's 7 predecessors; for sample 0 of a new buffer, those predecessors are the last 7 samples of whichever buffer was filled before it, not zeros and not garbage. `g_firHistory[]` is a small, 7-element array that persists across calls specifically to hold those samples, updated at the end of every `ApplyFirFilter()` call:
+Shifting once, at the end, keeps the accumulated sum at full precision until the very last step, giving a materially more accurate result for the same amount of code.
+
+**The first 7 samples of every new buffer need history from the *previous* buffer, or every buffer boundary produces an audible or visible glitch.** Convolution needs each sample's 7 predecessors; for sample 0 of a new buffer, those predecessors are the last 7 samples of whichever buffer was filled before it, not zeros and not garbage.
+
+`g_firHistory[]` is a small, 7-element array that persists across calls specifically to hold those samples, updated at the end of every `ApplyFirFilter()` call:
 
 ```c
 for (k = 0U; k < (FIR_TAPS - 1U); k++)
@@ -135,7 +143,11 @@ The very first buffer the board ever processes has no real prior history (`g_fir
 
 ## 10. The UART Bandwidth Budget, and Why the Output Is Decimated
 
-This is a real constraint, not a simplification for the sake of the demo. At 115200 baud, 8 data bits, 1 start bit, 1 stop bit (10 bits per byte), the UART can move at most `115200 / 10 = 11520` bytes per second. Printing every single sample at the full 10 kHz acquisition rate, even at a lean 12 to 13 bytes per line (`"1234,1180\r\n"`), would need roughly `10000 * 13 = 130000` bytes per second, more than ten times what the link can carry. Acquisition and filtering both genuinely run at the full 10 kHz internally, with zero CPU polling; what's actually limited is how much of that stream can be reported back to a laptop over a slow serial link, which is a completely different, and very real, bottleneck.
+This is a real constraint, not a simplification for the sake of the demo. At 115200 baud, 8 data bits, 1 start bit, 1 stop bit (10 bits per byte), the UART can move at most `115200 / 10 = 11520` bytes per second.
+
+Printing every single sample at the full 10 kHz acquisition rate, even at a lean 12 to 13 bytes per line (`"1234,1180\r\n"`), would need roughly `10000 * 13 = 130000` bytes per second, more than ten times what the link can carry.
+
+Acquisition and filtering both genuinely run at the full 10 kHz internally, with zero CPU polling; what's actually limited is how much of that stream can be reported back to a laptop over a slow serial link, which is a completely different, and very real, bottleneck.
 
 `demo_code/02_full_pipeline_with_fir/main.c` handles this by only printing every 16th sample (`DECIMATION`):
 

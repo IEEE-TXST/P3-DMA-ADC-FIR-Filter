@@ -29,17 +29,33 @@ Same rule as every prior manual: a reference, not required reading. Build each s
 
 Project leaders: bench-test both `demo_code/01_dma_adc_ping_pong/` and `demo_code/02_full_pipeline_with_fir/` on a real board before WS6 and WS7, with an actual potentiometer wired to PTE30 (Section 4). This project's failure modes are quieter than P2's, a misconfigured trigger source doesn't hard-fault, it just silently produces flat or garbage data, so seeing it work correctly once, on real hardware, before the session matters more here than the raw difficulty might suggest.
 
-**A note on accuracy:** every DMA, DMAMUX, and ADC-trigger register value in this manual was verified against either a working NXP SDK example (`demo_apps/adc16_low_power_async_dma`, which combines exactly these three peripherals) or the chip's own register-description file (`MKL26Z4.xml`), which lists the ADC's hardware trigger source options directly. The FIR filter's coefficients were computed with a real filter-design script (Section 9 includes it), not chosen by eye, and its frequency response was verified by computing it directly, not assumed. Section 20 has the full verification trail.
+#### A note on accuracy
+
+Every DMA, DMAMUX, and ADC-trigger register value in this manual was verified against either a working NXP SDK example (`demo_apps/adc16_low_power_async_dma`, which combines exactly these three peripherals) or the chip's own register-description file (`MKL26Z4.xml`), which lists the ADC's hardware trigger source options directly.
+
+The FIR filter's coefficients were computed with a real filter-design script (Section 9 includes it), not chosen by eye, and its frequency response was verified by computing it directly, not assumed. Section 20 has the full verification trail.
 
 ---
 
 ## 0. Why This Session Exists
 
-P1 read an ADC by asking for a value and waiting. P2 built a scheduler that lets several tasks share a CPU. P3 removes the CPU from the acquisition loop entirely: a timer and a DMA controller, working together in hardware, sample a signal at a precise, guaranteed rate while the processor does something else, or nothing at all, until there's real work (filtering) to do. This is not a niche technique. It's the actual architecture behind every audio codec, motor controller, and data-acquisition system built on a microcontroller, because it's the only way to guarantee sample timing isn't at the mercy of whatever else the CPU happens to be doing. P2's scheduler taught you that CPU time is a resource tasks compete for; P3 teaches you how to take an entire job (sampling) off that competition altogether.
+P1 read an ADC by asking for a value and waiting. P2 built a scheduler that lets several tasks share a CPU. P3 removes the CPU from the acquisition loop entirely: a timer and a DMA controller, working together in hardware, sample a signal at a precise, guaranteed rate while the processor does something else, or nothing at all, until there's real work (filtering) to do.
+
+This is not a niche technique. It's the actual architecture behind every audio codec, motor controller, and data-acquisition system built on a microcontroller, because it's the only way to guarantee sample timing isn't at the mercy of whatever else the CPU happens to be doing.
+
+P2's scheduler taught you that CPU time is a resource tasks compete for; P3 teaches you how to take an entire job (sampling) off that competition altogether.
 
 ## 2. Purpose
 
-By the end of these two sessions, every member has: a DMA channel and DMAMUX configured to move ADC results into RAM with zero CPU polling; an ADC triggered by a TPM timer, not by software; a working ping-pong buffer swap proven by a UART dump of real, changing samples; an 8-tap Q15 FIR low-pass filter applied to every completed buffer; and a live, side-by-side plot of raw vs. filtered data running on a laptop, driven by data streamed from the board. This is the closest thing in the series to a real, shippable signal-acquisition pipeline.
+By the end of these two sessions, every member has:
+
+- A DMA channel and DMAMUX configured to move ADC results into RAM with zero CPU polling.
+- An ADC triggered by a TPM timer, not by software.
+- A working ping-pong buffer swap proven by a UART dump of real, changing samples.
+- An 8-tap Q15 FIR low-pass filter applied to every completed buffer.
+- A live, side-by-side plot of raw vs. filtered data running on a laptop, driven by data streamed from the board.
+
+This is the closest thing in the series to a real, shippable signal-acquisition pipeline.
 
 ## 3. Prerequisites
 
