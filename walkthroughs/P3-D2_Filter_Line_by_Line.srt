@@ -1,0 +1,160 @@
+1
+00:00:00,500 --> 00:00:04,900
+We'll add a filter to the capture machine and compare raw and smoothed readings.
+
+2
+00:00:05,900 --> 00:00:10,220
+Use the same project and wiring. Paste this folder's two files and save.
+
+3
+00:00:11,220 --> 00:00:16,180
+Most of this file is already awake. It's the capture machine from demo one.
+
+4
+00:00:16,680 --> 00:00:23,720
+Line 107 is new: decimation 16, meaning we print every sixteenth sample.
+
+5
+00:00:24,220 --> 00:00:29,660
+Line 119 makes room for filtered results. It starts full of zeros.
+
+6
+00:00:30,660 --> 00:00:34,660
+Lines 139 to 142 connect timer to converter.
+
+7
+00:00:35,160 --> 00:00:43,060
+Lines 207 to 217 swap buffers. Notice the filter is not run here. Handlers stay
+
+8
+00:00:43,060 --> 00:00:43,560
+fast.
+
+9
+00:00:44,560 --> 00:00:48,160
+Switch on lines 263 to 265.
+
+10
+00:00:48,660 --> 00:00:50,980
+Line 263: eight taps.
+
+11
+00:00:51,480 --> 00:00:58,904
+Line 265 lists eight weights, mirrored around the middle. Together they equal 32768,
+
+12
+00:00:58,904 --> 00:01:00,760
+which stands for one.
+
+13
+00:01:01,760 --> 00:01:05,120
+Switch on lines 316 to 342.
+
+14
+00:01:05,620 --> 00:01:10,660
+Line 316 remembers seven samples from the previous buffer.
+
+15
+00:01:11,160 --> 00:01:16,680
+Line 318: the function takes raw input, an output buffer, and a count.
+
+16
+00:01:17,180 --> 00:01:23,420
+Line 323 visits every sample. Line 325 starts a total at zero.
+
+17
+00:01:24,420 --> 00:01:27,140
+Line 327 visits all eight taps.
+
+18
+00:01:27,640 --> 00:01:34,680
+Line 329 finds how far back to look: this position minus the tap number.
+
+19
+00:01:35,180 --> 00:01:42,396
+Line 330 chooses. If that position is zero or more, use this buffer. Otherwise use
+
+20
+00:01:42,396 --> 00:01:43,100
+history.
+
+21
+00:01:43,600 --> 00:01:47,600
+Line 332 multiplies weight by sample and adds to the total.
+
+22
+00:01:48,100 --> 00:01:55,220
+Line 335 shifts right by fifteen, dividing by 32768.
+
+23
+00:01:55,720 --> 00:01:59,080
+If every sample were 1000, what would come out?
+
+24
+00:01:59,580 --> 00:02:04,580
+Your turn. Pause the video.
+
+25
+00:02:04,580 --> 00:02:07,460
+1000, because the weights add to one.
+
+26
+00:02:08,460 --> 00:02:15,180
+Lines 338 to 341 save the last seven raw samples for the next buffer.
+
+27
+00:02:16,180 --> 00:02:22,772
+Build and load now. The second number is still zero, because nobody calls the
+
+28
+00:02:22,772 --> 00:02:25,940
+function. These numbers are examples.
+
+29
+00:02:26,940 --> 00:02:33,020
+Switch on line 418, inside the main loop. It filters the finished buffer.
+
+30
+00:02:33,520 --> 00:02:39,520
+Lines 421 to 424 print every sixteenth pair: raw, then filtered.
+
+31
+00:02:40,020 --> 00:02:45,700
+Build and load. The second number comes alive. These are examples.
+
+32
+00:02:46,700 --> 00:02:51,371
+Install two Python helpers, close your terminal, then run plot underscore fir
+
+33
+00:02:51,371 --> 00:02:53,980
+underscore demo dot py with your port name.
+
+34
+00:02:54,480 --> 00:02:56,640
+Turn the knob and compare the two lines.
+
+35
+00:02:57,640 --> 00:03:03,532
+Try eight equal weights of 4096 on line 265. Which version smooths more? Compare
+
+36
+00:03:03,532 --> 00:03:06,920
+them on the graph, then restore the originals.
+
+37
+00:03:07,420 --> 00:03:11,820
+On line 107, try four. Can the text line keep up?
+
+38
+00:03:12,320 --> 00:03:17,320
+Your turn. Pause the video.
+
+39
+00:03:17,320 --> 00:03:20,440
+Four times as many lines may be too much for it.
+
+40
+00:03:20,940 --> 00:03:26,620
+You now understand a digital filter, one line at a time. Wonderful work.
+

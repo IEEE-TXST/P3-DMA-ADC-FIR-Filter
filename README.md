@@ -6,6 +6,17 @@ IEEE TXST Student Branch, Fall 2026 FRDM-KL26Z project series.
 
 **Platform:** NXP FRDM-KL26Z (ARM Cortex-M0+, 48 MHz, 128 KB Flash) with a potentiometer (roughly $1) or the on-board ambient light sensor. Prerequisite: P1 and P2 complete.
 
+## Watch and build
+
+Watch in order. See [the walkthrough notes](walkthroughs/README.md) before you start.
+
+| Order | Video | Length | Code used |
+| ---: | --- | ---: | --- |
+| 1 | [Ideas: the delivery robot](walkthroughs/P3-01_Capture_With_DMA.mp4) | 2:03 |  |
+| 2 | [Demo 1: capture](walkthroughs/P3-D1_Capture_Line_by_Line.mp4) | 6:12 | [01_dma_adc_ping_pong](demo_code/01_dma_adc_ping_pong) |
+| 3 | [Ideas: smoothing a signal](walkthroughs/P3-02_Filter_Concepts.mp4) | 1:58 |  |
+| 4 | [Demo 2: filter](walkthroughs/P3-D2_Filter_Line_by_Line.mp4) | 3:28 | [02_full_pipeline_with_fir](demo_code/02_full_pipeline_with_fir) |
+
 ## What this project is
 
 Members configure the KL26Z's DMA controller to fill two alternating RAM buffers ("ping-pong") with ADC samples triggered by a hardware timer, with zero CPU involvement in acquisition. While DMA fills one buffer, the CPU processes the other: applying an 8-tap fixed-point (Q15) FIR low-pass filter. Filtered and raw samples stream over UART and get plotted live in Python. This is the architecture behind every audio codec, motor controller, and data acquisition system in industry.

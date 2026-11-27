@@ -1,0 +1,15 @@
+0:00 What we are building
+0:07 Files, drivers and wiring
+0:25 The includes, lines 82 to 89
+0:44 Step 1, hardware names, lines 134 to 141
+1:12 Sizes and flags, lines 143 to 155
+1:51 Step 2, the trigger, lines 198 to 201
+2:06 The converter, lines 203 to 223
+2:48 Step 3, the metronome, lines 257 to 267
+3:12 Step 4, start a delivery, lines 324 to 335
+3:49 Set up DMA, lines 337 to 349
+4:10 The ping-pong handler, lines 352 to 363
+4:35 Steps 5 to 8, lines 394 to 475
+5:00 Step 9, look at the data, lines 512 to 532
+5:32 Run it
+5:45 Experiments

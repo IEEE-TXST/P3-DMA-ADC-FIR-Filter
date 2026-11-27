@@ -1,0 +1,12 @@
+0:00 What we are building
+0:05 Files
+0:10 Already switched on, lines 95 to 119
+0:30 The machine, lines 139 to 217
+0:44 Step 1, the weights, lines 263 to 265
+1:01 Step 2, the function, lines 316 to 325
+1:23 The weighted sum, lines 327 to 335
+2:07 Remember the tail, lines 338 to 341
+2:15 Run before step 3
+2:26 Step 3, one line, line 418
+2:46 See the graph
+2:57 Experiments

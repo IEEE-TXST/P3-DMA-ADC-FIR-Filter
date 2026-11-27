@@ -1,0 +1,260 @@
+1
+00:00:00,500 --> 00:00:05,428
+A timer, a converter and a delivery engine will capture ten thousand readings a
+
+2
+00:00:05,428 --> 00:00:07,300
+second. We'll read every line.
+
+3
+00:00:08,300 --> 00:00:16,140
+Tick four drivers: adc16, dma, dmamux and tpm. Paste both files and save.
+
+4
+00:00:16,640 --> 00:00:24,720
+With power off, wire a knob to pin PTE30: outer legs to ground and 3.3 volts.
+
+5
+00:00:25,720 --> 00:00:34,600
+Lines 82 to 85: board, pins, clock and text. Line 86: the converter.
+
+6
+00:00:35,100 --> 00:00:43,502
+Line 87 is DMA, and line 88 is its switchboard, the multiplexer. Line 89 is the
+
+7
+00:00:43,502 --> 00:00:44,140
+timer.
+
+8
+00:00:45,140 --> 00:00:48,740
+Switch on lines 134 to 155.
+
+9
+00:00:49,240 --> 00:00:57,240
+Lines 134 to 136: converter zero, setting group zero, and channel 23.
+
+10
+00:00:57,740 --> 00:01:04,220
+Line 137 is the address of the converter's result box. DMA works with addresses.
+
+11
+00:01:04,720 --> 00:01:12,480
+Lines 139 to 141: which DMA, channel zero, and its multiplexer.
+
+12
+00:01:13,480 --> 00:01:19,800
+Lines 143 and 144: 64 samples per buffer, 10,000 per second.
+
+13
+00:01:20,300 --> 00:01:25,180
+Lines 146 and 147 are buffers A and B.
+
+14
+00:01:25,680 --> 00:01:32,080
+Line 148 lists them, so code can say buffer zero or buffer one.
+
+15
+00:01:32,580 --> 00:01:36,660
+Lines 150 and 151 hold DMA's working information.
+
+16
+00:01:37,160 --> 00:01:47,784
+Line 153: which buffer is filling. Line 154: which is ready, with minus one meaning
+
+17
+00:01:47,784 --> 00:01:51,240
+none. Line 155 counts them.
+
+18
+00:01:52,240 --> 00:01:55,360
+Switch on lines 198 to 224.
+
+19
+00:01:55,860 --> 00:02:02,577
+Line 200 is a wiring switch inside the chip. It says: start a measurement when the
+
+20
+00:02:02,577 --> 00:02:06,100
+timer overflows, and listen to this choice.
+
+21
+00:02:07,100 --> 00:02:16,508
+Lines 208 to 212: load defaults, choose 16 bits, pick its clock, turn off continuous
+
+22
+00:02:16,508 --> 00:02:18,300
+mode, and apply.
+
+23
+00:02:18,800 --> 00:02:21,920
+Lines 214 to 216 calibrate it.
+
+24
+00:02:22,420 --> 00:02:26,420
+Lines 218 to 220 choose channel 23.
+
+25
+00:02:26,920 --> 00:02:34,092
+Line 222: hardware triggers start each reading. Line 223: each finished reading
+
+26
+00:02:34,092 --> 00:02:35,000
+calls DMA.
+
+27
+00:02:35,500 --> 00:02:39,660
+With 16 bits, what's the largest number?
+
+28
+00:02:40,160 --> 00:02:45,160
+Your turn. Pause the video.
+
+29
+00:02:45,160 --> 00:02:47,720
+65535.
+
+30
+00:02:48,720 --> 00:02:52,720
+Switch on lines 257 to 267.
+
+31
+00:02:53,220 --> 00:02:55,380
+Line 260 asks the clock speed.
+
+32
+00:02:55,880 --> 00:03:01,640
+Lines 262 to 264 choose the timer's clock and set it up.
+
+33
+00:03:02,140 --> 00:03:07,820
+Line 265 sets the count: clock speed divided by 10,000, minus one.
+
+34
+00:03:08,320 --> 00:03:12,480
+Line 266 starts it. This function isn't called yet.
+
+35
+00:03:13,480 --> 00:03:16,920
+Switch on lines 324 to 363.
+
+36
+00:03:17,420 --> 00:03:27,148
+Lines 326 to 328 describe the job: from the result box, into one buffer, 64 samples,
+
+37
+00:03:27,148 --> 00:03:29,580
+peripheral to memory.
+
+38
+00:03:30,080 --> 00:03:36,640
+Line 330 loads the job. Line 331 asks for a doorbell when it's full.
+
+39
+00:03:37,140 --> 00:03:40,660
+Line 332 allows requests at any time.
+
+40
+00:03:41,160 --> 00:03:45,480
+Line 333, cycle steal: one sample per request.
+
+41
+00:03:45,980 --> 00:03:48,780
+Line 334 arms the transfer.
+
+42
+00:03:49,780 --> 00:03:56,100
+Lines 339 to 341 connect the converter's request to channel zero.
+
+43
+00:03:56,600 --> 00:04:01,560
+Lines 343 and 344 start DMA and make its handle.
+
+44
+00:04:02,060 --> 00:04:09,660
+Lines 346 and 347 begin with buffer zero. Line 349 allows the interrupt.
+
+45
+00:04:10,660 --> 00:04:13,700
+Line 354 notes which buffer just filled.
+
+46
+00:04:14,200 --> 00:04:17,160
+Line 356 clears the done flag.
+
+47
+00:04:17,660 --> 00:04:23,980
+Line 358 flips: one minus the index turns zero into one, and one into zero.
+
+48
+00:04:24,480 --> 00:04:28,160
+Line 359 immediately starts filling the other buffer.
+
+49
+00:04:28,660 --> 00:04:34,980
+Only then, line 361 marks the full one ready. Line 362 counts it.
+
+50
+00:04:35,980 --> 00:04:42,460
+Inside main, switch on lines 394 to 399. They wake the board and print the rate.
+
+51
+00:04:42,960 --> 00:04:47,520
+Switch on lines 422 and 423: the converter and its trigger.
+
+52
+00:04:48,020 --> 00:04:51,940
+Switch on line 446: DMA.
+
+53
+00:04:52,440 --> 00:05:00,120
+Switch on line 475. The timer starts last, when everything else is ready.
+
+54
+00:05:01,120 --> 00:05:05,280
+Switch on lines 512 to 532.
+
+55
+00:05:05,780 --> 00:05:09,620
+Line 514: is a buffer ready?
+
+56
+00:05:10,120 --> 00:05:18,360
+Line 516 copies its number. Line 520 marks it taken. Line 521 finds the buffer.
+
+57
+00:05:18,860 --> 00:05:21,900
+Line 523 prints its number and the count.
+
+58
+00:05:22,400 --> 00:05:31,840
+Lines 525 to 528 print the first eight samples. Line 530 ends the line.
+
+59
+00:05:32,840 --> 00:05:39,652
+Build and load. Lines scroll quickly. These numbers are examples. Printing is slow,
+
+60
+00:05:39,652 --> 00:05:45,480
+so capture numbers may skip. Turn the knob and watch the values follow.
+
+61
+00:05:46,480 --> 00:05:51,840
+On line 144, try 2000. How long does one buffer take now?
+
+62
+00:05:52,340 --> 00:05:57,340
+Your turn. Pause the video.
+
+63
+00:05:57,340 --> 00:05:58,620
+32 milliseconds.
+
+64
+00:05:59,120 --> 00:06:04,800
+Predict what happens if line 333 says false. Then test it and put it back.
+
+65
+00:06:05,300 --> 00:06:10,020
+You've read a complete hardware pipeline, line by line. Excellent.
+

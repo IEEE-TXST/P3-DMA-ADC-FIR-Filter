@@ -1,0 +1,88 @@
+1
+00:00:00,500 --> 00:00:07,620
+Real signals shake. We want the gentle shape underneath. A filter finds it.
+
+2
+00:00:08,620 --> 00:00:13,020
+Half of forty plus half of sixty is fifty. Averaging calms sudden jumps.
+
+3
+00:00:13,520 --> 00:00:16,560
+What's the average of 10, 20 and 90?
+
+4
+00:00:17,060 --> 00:00:22,060
+Your turn. Pause the video.
+
+5
+00:00:22,060 --> 00:00:26,060
+Forty. One wild number has less power when it shares.
+
+6
+00:00:27,060 --> 00:00:32,470
+Our filter looks at the latest eight samples. Each gets a weight. The middle ones
+
+7
+00:00:32,470 --> 00:00:34,340
+count most, the edges least.
+
+8
+00:00:34,840 --> 00:00:41,392
+Multiply, add them all, and you get one smoothed number. Then slide along by one and
+
+9
+00:00:41,392 --> 00:00:44,200
+repeat. This is called a FIR filter.
+
+10
+00:00:44,700 --> 00:00:46,220
+Each weighted spot is a tap.
+
+11
+00:00:47,220 --> 00:00:52,034
+Slow changes survive. Fast wiggles fade. That's a low-pass filter. This one is
+
+12
+00:00:52,034 --> 00:00:55,860
+designed to start fading things around 500 wiggles per second.
+
+13
+00:00:56,860 --> 00:01:06,673
+Our chip has no special hardware for decimals. So each weight is multiplied by
+
+14
+00:01:06,673 --> 00:01:11,580
+32,768 and rounded. This is called Q15.
+
+15
+00:01:12,080 --> 00:01:20,514
+After adding everything, we divide by 32,768 once, by shifting fifteen places. All
+
+16
+00:01:20,514 --> 00:01:27,920
+eight weights add to exactly 32,768, so a steady signal keeps its level.
+
+17
+00:01:28,920 --> 00:01:34,052
+The first samples of a new basket need the last seven from the old one. We save
+
+18
+00:01:34,052 --> 00:01:36,520
+them, so there's no bump at each swap.
+
+19
+00:01:37,520 --> 00:01:41,840
+Smoothing looks at the past, so the smooth line arrives a little late.
+
+20
+00:01:42,840 --> 00:01:48,199
+Ten thousand lines a second won't fit down our message cable. So we print every
+
+21
+00:01:48,199 --> 00:01:51,320
+sixteenth sample, while filtering all of them.
+
+22
+00:01:51,820 --> 00:01:55,980
+This thinning is called decimation. Let's build it.
+
