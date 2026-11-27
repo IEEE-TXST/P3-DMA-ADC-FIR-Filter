@@ -1,41 +1,84 @@
-/*
- * P3 Session 1 reference: DMA-driven ADC ping-pong, no filtering yet.
+/* ==========================================================================
+ *  P3 DEMO 1: SAMPLING WITH DMA (PING-PONG BUFFERS), A STEP-BY-STEP LADDER
+ * ==========================================================================
  *
- * TPM0 overflows at 10 kHz and triggers the ADC directly in hardware
- * (Section 7 of the manual). Each conversion result is moved from the ADC
- * result register into RAM by DMA, with no CPU involvement at all. Every
- * time one buffer fills, DMA0_IRQHandler immediately repoints DMA at the
- * other buffer (so acquisition never stops) and hands the full buffer to
- * main() to look at. main() just dumps the first few raw samples of each
- * completed buffer over UART, to prove the pipeline is really running.
+ *  Goal: measure an analog voltage 10,000 times every second, store every
+ *  measurement in memory, and print a few of them. And do ALL the
+ *  measuring without the CPU lifting a finger.
  *
- * Reference only. Build the DMA/ADC/TPM configuration yourself first;
- * open this only if stuck.
- */
+ *  Three pieces of hardware work together as a pipeline:
+ *
+ *    TPM0 timer  : ticks exactly 10,000 times a second, like a metronome
+ *    ADC         : on each tick, measures the voltage on pin PTE30
+ *    DMA         : on each finished measurement, copies the result into
+ *                  memory, automatically
+ *
+ *  DMA stands for Direct Memory Access. Think of it as a courier that moves
+ *  data between a peripheral and memory by itself, so the CPU is free for
+ *  other work. In P1 Demo 3 the CPU waited for each ADC reading. That can
+ *  not keep up with thousands of samples a second. DMA can.
+ *
+ *  This file starts almost empty on purpose. The code for each step is
+ *  already here, but turned OFF (commented out). You switch it on one step
+ *  at a time, run it on the board, and see what changed.
+ *
+ *  BEFORE YOU START: SET UP YOUR PROJECT (3 quick steps)
+ *
+ *    1. Create a new project with the SDK wizard. The P0 manual, Section 9,
+ *       Step 1, shows exactly how.
+ *    2. Paste this whole file over the contents of your project's main
+ *       source file.
+ *    3. Replace your project's pin_mux.c with the pin_mux.c that sits next
+ *       to this file. It tells the chip which pins are the LED, the button
+ *       and so on. Forget it and the program still builds and runs, but
+ *       the LED or button does nothing, with no error message at all.
+ *
+ *  HOW TO USE THIS FILE
+ *
+ *    1. Read the STEP box. It explains the idea in plain words.
+ *    2. Select ALL the grey "//" code lines under it (the whole block).
+ *    3. Press  Cmd + /  (Mac)  or  Ctrl + /  (Windows)  to turn them ON.
+ *    4. Build, flash, and watch the terminal.
+ *    5. Do the "TRY IT" exercise, then move on to the next STEP.
+ *
+ *  Do the steps IN ORDER. Each step is one self-contained block, so after
+ *  you turn on a step the program always builds and runs with no errors.
+ *  Each box has a "NEEDS" line telling you which earlier steps must be on.
+ *
+ *  THE ONE RULE
+ *
+ *    Text inside  / * ... * /  boxes is explanation. Leave it alone.
+ *    Lines starting with  //  are code that is switched off. Those are the
+ *    only lines you ever turn on.
+ *
+ *  HOW THIS FILE IS LAID OUT
+ *
+ *    PART A (STEPS 1 to 4, above main): writes the pieces of the pipeline
+ *    as functions. Nothing runs yet. Each step just needs to build with no
+ *    errors.
+ *
+ *    PART B (STEPS 5 to 9, inside main): starts the pieces in the right
+ *    order, and finally prints what was captured.
+ *
+ *  WHAT IS A PING-PONG BUFFER?
+ *    DMA fills a buffer (a block of memory) with 64 samples. While we read
+ *    the finished buffer, DMA must keep sampling without a gap, so it needs
+ *    somewhere else to put new samples. So we use TWO buffers, A and B.
+ *    DMA fills A while we read B. Then they swap. Like a ping-pong ball
+ *    going back and forth, hence the name.
+ * ========================================================================== */
 
-/*
- * WHAT: Continuously samples one analog pin at 10,000 samples/second, using
- * hardware alone (a timer, the ADC, and DMA) to acquire each sample, with
- * the CPU only touching the data after a whole 64-sample buffer is full.
+
+/* --------------------------------------------------------------------------
+ *  INCLUDES (already on, nothing to do)
  *
- * HOW: TPM0 is configured to overflow (reset back to 0) 10,000 times a
- * second, and that overflow event is wired, purely in hardware, to trigger
- * an ADC conversion. Each ADC result then triggers a DMA transfer that
- * copies the result out of the ADC's result register into one of two
- * buffers. When a buffer fills, an interrupt fires: it immediately points
- * DMA at the OTHER buffer (so sampling never has a gap) and flags the
- * just-filled buffer for main() to read.
- *
- * WHY: P1's ADC demo triggered one conversion per keypress, with the CPU
- * blocking until it finished, that doesn't scale to thousands of samples
- * per second. Here, none of the three peripherals involved (TPM, ADC, DMA)
- * ever interrupts the CPU to do the sampling itself; the CPU only gets
- * involved once every 64 samples, to consume a finished buffer. This is
- * the same "configure hardware once, let it run itself" idea as TPM PWM in
- * P1, taken further: an entire acquisition pipeline running with zero CPU
- * polling, freeing the CPU for other work (this project's eventual FIR
- * filtering, in Session 2) while acquisition continues underneath.
- */
+ *  fsl_adc16.h : the ADC driver
+ *  fsl_dma.h   : the DMA driver
+ *  fsl_dmamux.h: the DMA multiplexer, which decides which peripheral's
+ *                requests are connected to which DMA channel
+ *  fsl_tpm.h   : the timer driver
+ * -------------------------------------------------------------------------- */
+
 #include "board.h"
 #include "pin_mux.h"
 #include "clock_config.h"
@@ -45,279 +88,484 @@
 #include "fsl_dmamux.h"
 #include "fsl_tpm.h"
 
-#define DEMO_ADC16_BASEADDR ADC0
-#define DEMO_ADC16_CHANNEL_GROUP 0U
-#define DEMO_ADC16_CHANNEL 23U /* PTE30, same analog header pin P1 used */
-/*
- * WHAT: The raw memory address of the ADC's conversion-result register.
- * WHY: DMA needs a plain memory address to read from, not an SDK function
- * call; &ADC0->R[0] is that register's location, and DMA will read a fresh
- * value from this exact address once per trigger.
- */
-#define ADC16_RESULT_REG_ADDR ((uint32_t)(&ADC0->R[0]))
 
-#define DEMO_DMA_BASEADDR DMA0
-#define DEMO_DMA_CHANNEL 0U
-#define DEMO_DMAMUX_BASEADDR DMAMUX0
 
-#define BUFFER_SAMPLES 64U
-#define SAMPLE_RATE_HZ 10000U
 
-/*
- * WHAT: Two fixed buffers DMA alternates between ("ping-pong"), and a
- * lookup array so code can refer to "the buffer at index 0 or 1" instead of
- * naming A/B directly.
- * WHY: Two separate buffers, not one, is what lets acquisition and
- * consumption happen at the same time: while DMA fills buffer B, main() (or
- * the FIR filter in Session 2) can safely read the already-complete buffer
- * A, with no risk of reading data that's still being written.
- */
-static uint32_t g_bufferA[BUFFER_SAMPLES];
-static uint32_t g_bufferB[BUFFER_SAMPLES];
-static uint32_t *const g_pingPongBuffers[2] = {g_bufferA, g_bufferB};
 
-static dma_handle_t g_dmaHandle;
-static dma_transfer_config_t g_transferConfig;
+/* ==========================================================================
+ *  PART A, STEP 1: THE NUMBERS, THE TWO BUFFERS AND THE FLAGS
+ *
+ *  CONCEPT
+ *    Everything else depends on these, so they come first.
+ *
+ *    Which hardware:
+ *      DEMO_ADC16_CHANNEL 23    the ADC input wired to pin PTE30, the same
+ *                               pin P1 Demo 3 used
+ *      ADC16_RESULT_REG_ADDR    the raw memory ADDRESS of the ADC's result
+ *                               register. DMA works with plain addresses,
+ *                               not driver functions. It reads a fresh
+ *                               measurement from this address each time.
+ *      DMA0, channel 0, DMAMUX0 which DMA engine and channel we use
+ *
+ *    How much:
+ *      BUFFER_SAMPLES 64        each buffer holds 64 samples
+ *      SAMPLE_RATE_HZ 10000     10,000 samples every second
+ *
+ *    The two buffers, A and B, and a small list g_pingPongBuffers so that
+ *    code can say "buffer 0 or buffer 1" instead of naming A or B.
+ *
+ *    The flags, shared between the DMA interrupt and main():
+ *      g_fillIndex       which buffer DMA is writing into right now
+ *      g_readyIndex      which finished buffer main() should look at.
+ *                        -1 means "none waiting".
+ *      g_buffersCaptured how many buffers have been filled so far
+ *    "volatile" is required because they change behind main()'s back.
+ *
+ *  NEEDS: nothing. Safe to flash right away.
+ *
+ *  TRY IT
+ *    Turn the whole block on and build. Work out for yourself: how long, in
+ *    milliseconds, does it take to fill one 64-sample buffer at 10,000
+ *    samples a second? (Answer in the exercises.)
+ *
+ *  NEXT: go to STEP 2.
+ * ========================================================================== */
 
-static volatile uint8_t g_fillIndex = 0U;  /* which buffer DMA is currently writing into */
-static volatile int32_t g_readyIndex = -1; /* which buffer main() should look at; -1 = none waiting */
-static volatile uint32_t g_buffersCaptured = 0U;
+//#define DEMO_ADC16_BASEADDR ADC0
+//#define DEMO_ADC16_CHANNEL_GROUP 0U
+//#define DEMO_ADC16_CHANNEL 23U
+//#define ADC16_RESULT_REG_ADDR ((uint32_t)(&ADC0->R[0]))
+//
+//#define DEMO_DMA_BASEADDR DMA0
+//#define DEMO_DMA_CHANNEL 0U
+//#define DEMO_DMAMUX_BASEADDR DMAMUX0
+//
+//#define BUFFER_SAMPLES 64U
+//#define SAMPLE_RATE_HZ 10000U
+//
+//uint32_t g_bufferA[BUFFER_SAMPLES];
+//uint32_t g_bufferB[BUFFER_SAMPLES];
+//uint32_t *const g_pingPongBuffers[2] = {g_bufferA, g_bufferB};
+//
+//dma_handle_t g_dmaHandle;
+//dma_transfer_config_t g_transferConfig;
+//
+//volatile uint8_t g_fillIndex = 0U;
+//volatile int32_t g_readyIndex = -1;
+//volatile uint32_t g_buffersCaptured = 0U;
 
-/*
- * ADC0TRGSEL = 0b1000 selects TPM0 overflow as the ADC's hardware trigger
- * source; ADC0ALTTRGEN routes SOPT7's selection into the ADC instead of
- * the chip's default PDB-based trigger. Verified against the chip's own
- * register description (MKL26Z4.xml, SOPT7.ADC0TRGSEL enumeration), not
- * guessed. See the manual, Section 7.
- */
-/*
- * WHAT: Wires TPM0's overflow event directly to the ADC's trigger input, in
- * hardware.
- * HOW: Writes two bitfields in the SIM (System Integration Module)'s SOPT7
- * register: ADC0TRGSEL picks which hardware signal triggers the ADC (8 =
- * TPM0 overflow), and ADC0ALTTRGEN switches the ADC from its default
- * trigger source (a different peripheral called the PDB) to this
- * alternate, SOPT7-selected one.
- * WHY: This is a chip-level routing decision, not something the ADC or TPM
- * driver alone can express, which is why it's a direct register write
- * instead of an SDK function call. Without ADC0ALTTRGEN set, TPM0's
- * overflow would have no effect on the ADC at all, since the ADC would
- * still be listening to the PDB by default.
- */
-static void ConfigureAdcHardwareTrigger(void)
-{
-    SIM->SOPT7 = (SIM->SOPT7 & ~SIM_SOPT7_ADC0TRGSEL_MASK) | SIM_SOPT7_ADC0TRGSEL(8) | SIM_SOPT7_ADC0ALTTRGEN(1);
-}
 
-/*
- * WHAT: Configures ADC0 to convert on channel 23 (PTE30) at 16-bit
- * resolution, driven by hardware triggers instead of software, with DMA
- * requests enabled.
- * HOW: Same GetDefaultConfig-then-Init pattern as every other peripheral in
- * this series, but with two settings deliberately overridden from default:
- * 16-bit resolution (finer-grained than P1's 12-bit reads) and
- * enableContinuousConversion left false, since each conversion here is
- * meant to be triggered individually by TPM0, not run back-to-back on its
- * own.
- * WHY: ADC16_EnableHardwareTrigger(true) and ADC16_EnableDMA(true) together
- * are what actually make this pipeline hardware-driven: hardware trigger
- * means the ADC starts a new conversion by itself whenever TPM0 overflows,
- * without any CPU or software call; EnableDMA means a finished conversion
- * raises a DMA request instead of needing a CPU interrupt to notice and
- * copy the result out.
- */
-static void ConfigureAdc(void)
-{
-    adc16_config_t adcConfig;
-    adc16_channel_config_t channelConfig;
 
-    ADC16_GetDefaultConfig(&adcConfig);
-    adcConfig.resolution = kADC16_Resolution16Bit;
-    adcConfig.clockSource = kADC16_ClockSourceAsynchronousClock;
-    adcConfig.enableContinuousConversion = false;
-    ADC16_Init(DEMO_ADC16_BASEADDR, &adcConfig);
-#if defined(FSL_FEATURE_ADC16_HAS_CALIBRATION) && FSL_FEATURE_ADC16_HAS_CALIBRATION
-    ADC16_DoAutoCalibration(DEMO_ADC16_BASEADDR);
-#endif
 
-    channelConfig.channelNumber = DEMO_ADC16_CHANNEL;
-    channelConfig.enableInterruptOnConversionCompleted = false;
-    ADC16_SetChannelConfig(DEMO_ADC16_BASEADDR, DEMO_ADC16_CHANNEL_GROUP, &channelConfig);
 
-    /* Both of these are what let DMA, not software, drive every conversion:
-       hardware trigger means the ADC starts on its own on each TPM
-       overflow, and EnableDMA means each finished conversion raises a DMA
-       request instead of (or in addition to) a CPU interrupt. */
-    ADC16_EnableHardwareTrigger(DEMO_ADC16_BASEADDR, true);
-    ADC16_EnableDMA(DEMO_ADC16_BASEADDR, true);
-}
+/* ==========================================================================
+ *  PART A, STEP 2: THE ADC AND ITS HARDWARE TRIGGER
+ *
+ *  CONCEPT
+ *    Two functions.
+ *
+ *    ConfigureAdcHardwareTrigger
+ *        Wires the timer straight to the ADC, inside the chip. The ADC
+ *        normally listens to a different trigger source. This one line
+ *        writes to a chip-level routing register (SIM->SOPT7) to say:
+ *          ADC0TRGSEL = 8      "start a conversion when TPM0 overflows"
+ *          ADC0ALTTRGEN = 1    "listen to this choice instead of the
+ *                               default"
+ *        Forget ADC0ALTTRGEN and the timer ticks with no effect, because
+ *        the ADC is still listening to something else.
+ *
+ *    ConfigureAdc
+ *        Same "fill defaults, then apply" pattern as P1. Two changes:
+ *          16-bit resolution     results from 0 to 65535, finer than the
+ *                                12-bit of P1
+ *          continuous conversion OFF, because the timer will start each
+ *                                conversion individually
+ *        It also calibrates the ADC, then picks channel 23. The last two
+ *        lines are the heart of the pipeline:
+ *          EnableHardwareTrigger  the ADC starts itself on each timer tick
+ *          EnableDMA              each finished conversion raises a DMA
+ *                                 request, so DMA collects the result
+ *
+ *  NEEDS: STEP 1 already on. Safe to flash right away. Defined, not run.
+ *
+ *  TRY IT
+ *    Turn the whole block on and build. Find the line that selects 16-bit
+ *    resolution. Next to it, what would 12-bit be called?
+ *
+ *  NEXT: go to STEP 3.
+ * ========================================================================== */
 
-/*
- * WHAT: Configures TPM0 to overflow (and thus trigger the ADC) exactly
- * 10,000 times per second, driving nothing else.
- * HOW: TPM_SetTimerPeriod sets the counter's reload value (MOD) so it
- * overflows once every tpmClockHz/SAMPLE_RATE_HZ ticks; no PWM channel or
- * output pin is configured, unlike P1's PWM demo, since this timer's only
- * job is to generate a periodic internal event, never to drive a physical
- * pin.
- * WHY: This is the "metronome" for the whole acquisition pipeline: every
- * other piece (the ADC trigger routing in ConfigureAdcHardwareTrigger, and
- * ultimately the DMA transfers) only happens because this timer ticks at a
- * steady, hardware-precise 10kHz, far steadier than any software delay
- * loop could achieve.
- */
-static void ConfigureTpmTrigger(void)
-{
-    tpm_config_t tpmConfig;
-    uint32_t tpmClockHz = CLOCK_GetFreq(kCLOCK_PllFllSelClk);
+//void ConfigureAdcHardwareTrigger(void)
+//{
+//    SIM->SOPT7 = (SIM->SOPT7 & ~SIM_SOPT7_ADC0TRGSEL_MASK) | SIM_SOPT7_ADC0TRGSEL(8) | SIM_SOPT7_ADC0ALTTRGEN(1);
+//}
+//
+//void ConfigureAdc(void)
+//{
+//    adc16_config_t adcConfig;
+//    adc16_channel_config_t channelConfig;
+//
+//    ADC16_GetDefaultConfig(&adcConfig);
+//    adcConfig.resolution = kADC16_Resolution16Bit;
+//    adcConfig.clockSource = kADC16_ClockSourceAsynchronousClock;
+//    adcConfig.enableContinuousConversion = false;
+//    ADC16_Init(DEMO_ADC16_BASEADDR, &adcConfig);
+//
+//#if defined(FSL_FEATURE_ADC16_HAS_CALIBRATION) && FSL_FEATURE_ADC16_HAS_CALIBRATION
+//    ADC16_DoAutoCalibration(DEMO_ADC16_BASEADDR);
+//#endif
+//
+//    channelConfig.channelNumber = DEMO_ADC16_CHANNEL;
+//    channelConfig.enableInterruptOnConversionCompleted = false;
+//    ADC16_SetChannelConfig(DEMO_ADC16_BASEADDR, DEMO_ADC16_CHANNEL_GROUP, &channelConfig);
+//
+//    ADC16_EnableHardwareTrigger(DEMO_ADC16_BASEADDR, true);
+//    ADC16_EnableDMA(DEMO_ADC16_BASEADDR, true);
+//}
 
-    CLOCK_SetTpmClock(1U);
-    TPM_GetDefaultConfig(&tpmConfig);
-    TPM_Init(TPM0, &tpmConfig);
-    /* Overflow fires once every (MOD + 1) clock ticks; no channel or pin
-       is configured here, this timer never drives an output. Only its
-       internal overflow event is used, routed to the ADC through
-       ConfigureAdcHardwareTrigger() above. */
-    TPM_SetTimerPeriod(TPM0, (tpmClockHz / SAMPLE_RATE_HZ) - 1U);
-    TPM_StartTimer(TPM0, kTPM_SystemClock);
-}
 
-/*
- * WHAT: Arms one DMA transfer that will copy BUFFER_SAMPLES conversion
- * results, one at a time, from the ADC's result register into the chosen
- * buffer.
- * HOW: DMA_PrepareTransfer describes the transfer (source address, dest
- * address, how many bytes per request, total bytes) as
- * kDMA_PeripheralToMemory; DMA_EnableCycleSteal is the setting that makes
- * DMA move exactly one sample per ADC trigger instead of racing through the
- * whole buffer the instant the first trigger arrives.
- * WHY: Cycle-steal mode is what keeps this transfer synchronized with the
- * real 10kHz sample rate: without it, DMA would copy all 64 samples back to
- * back as fast as the bus allows the moment it saw one DMA request,
- * defeating the entire point of pacing acquisition with TPM0.
- */
-static void StartDmaIntoBuffer(uint8_t bufferIndex)
-{
-    DMA_PrepareTransfer(&g_transferConfig, (void *)ADC16_RESULT_REG_ADDR, sizeof(uint32_t),
-                        (void *)g_pingPongBuffers[bufferIndex], sizeof(uint32_t), BUFFER_SAMPLES * sizeof(uint32_t),
-                        kDMA_PeripheralToMemory);
-    DMA_SetTransferConfig(DEMO_DMA_BASEADDR, DEMO_DMA_CHANNEL, &g_transferConfig);
-    DMA_EnableInterrupts(DEMO_DMA_BASEADDR, DEMO_DMA_CHANNEL);
-    DMA_EnableAsyncRequest(DEMO_DMA_BASEADDR, DEMO_DMA_CHANNEL, true);
-    DMA_EnableCycleSteal(DEMO_DMA_BASEADDR, DEMO_DMA_CHANNEL, true); /* one sample per ADC request, not the whole buffer at once */
-    DMA_StartTransfer(&g_dmaHandle);
-}
 
-/*
- * WHAT: One-time DMA/DMAMUX setup, then kicks off the very first transfer
- * into buffer 0.
- * HOW: DMAMUX (DMA Multiplexer) is configured first, since it's the piece
- * that connects a specific peripheral's DMA request (here, ADC0's) to a
- * specific DMA channel; only after that routing exists does starting an
- * actual transfer make sense.
- * WHY: This function's last two lines (StartDmaIntoBuffer + NVIC_EnableIRQ)
- * put the very first buffer into motion; from this point on,
- * DMA0_IRQHandler below is what keeps re-arming subsequent transfers, this
- * function is never called again.
- */
-static void ConfigureDma(void)
-{
-    DMAMUX_Init(DEMO_DMAMUX_BASEADDR);
-    DMAMUX_SetSource(DEMO_DMAMUX_BASEADDR, DEMO_DMA_CHANNEL, kDmaRequestMux0ADC0);
-    DMAMUX_EnableChannel(DEMO_DMAMUX_BASEADDR, DEMO_DMA_CHANNEL);
 
-    DMA_Init(DEMO_DMA_BASEADDR);
-    DMA_CreateHandle(&g_dmaHandle, DEMO_DMA_BASEADDR, DEMO_DMA_CHANNEL);
 
-    g_fillIndex = 0U;
-    StartDmaIntoBuffer(g_fillIndex);
-    NVIC_EnableIRQ(DMA0_IRQn);
-}
+/* ==========================================================================
+ *  PART A, STEP 3: THE TIMER THAT SETS THE SAMPLE RATE
+ *
+ *  CONCEPT
+ *    The timer TPM0 is the metronome of the whole pipeline. We set it to
+ *    overflow, meaning count up to a limit and wrap to zero, exactly 10,000
+ *    times every second.
+ *
+ *    How: the timer counts clock ticks. If the clock runs at tpmClockHz
+ *    ticks per second, then counting to  tpmClockHz / 10,000  takes
+ *    1/10,000 of a second. The "- 1" is because counting starts at zero.
+ *
+ *    This timer does NOT drive any pin or LED. Its only job is the
+ *    internal overflow event, which STEP 2 wired to the ADC. That makes the
+ *    sample rate hardware-exact, far steadier than any delay loop in
+ *    software.
+ *
+ *  NEEDS: STEPS 1 and 2 already on. Safe to flash right away. Defined, not
+ *  run.
+ *
+ *  TRY IT
+ *    Turn the whole block on and build. Which single number would you
+ *    change to sample 2,000 times a second instead?
+ *
+ *  NEXT: go to STEP 4.
+ * ========================================================================== */
 
-/*
- * WHAT: Fires once a DMA transfer finishes filling a whole buffer (64
- * samples).
- * HOW: Clears the DMA channel's completion flag, flips g_fillIndex to the
- * OTHER buffer and immediately starts a new transfer into it, then marks
- * the just-completed buffer as g_readyIndex for main() to consume.
- * WHY: The order here matters: re-arming DMA into the other buffer happens
- * BEFORE handing the finished buffer to main(), so there is no gap in
- * acquisition, the next sample after this interrupt fires still lands
- * somewhere valid. This chip's DMA has no built-in scatter-gather (unlike
- * larger Kinetis parts' eDMA), so this software-driven alternation between
- * two fixed buffers is what stands in for that hardware feature.
- */
-void DMA0_IRQHandler(void)
-{
-    uint8_t justFilled = g_fillIndex;
+//void ConfigureTpmTrigger(void)
+//{
+//    tpm_config_t tpmConfig;
+//    uint32_t tpmClockHz = CLOCK_GetFreq(kCLOCK_PllFllSelClk);
+//
+//    CLOCK_SetTpmClock(1U);
+//    TPM_GetDefaultConfig(&tpmConfig);
+//    TPM_Init(TPM0, &tpmConfig);
+//    TPM_SetTimerPeriod(TPM0, (tpmClockHz / SAMPLE_RATE_HZ) - 1U);
+//    TPM_StartTimer(TPM0, kTPM_SystemClock);
+//}
 
-    DMA_ClearChannelStatusFlags(DEMO_DMA_BASEADDR, DEMO_DMA_CHANNEL, kDMA_TransactionsDoneFlag);
 
-    /* Ping-pong, the actual point of this project: hand the buffer that
-       just finished to main(), and immediately repoint DMA at the OTHER
-       buffer so sampling never stops while main() is still looking at this
-       one. This chip's DMA has no built-in scatter-gather (unlike the
-       eDMA on larger Kinetis parts), so the alternation is done here in
-       software, not by a hardware descriptor chain. See the manual,
-       Section 6. */
-    g_fillIndex = 1U - g_fillIndex;
-    StartDmaIntoBuffer(g_fillIndex);
 
-    g_readyIndex = (int32_t)justFilled;
-    g_buffersCaptured++;
-}
+
+
+/* ==========================================================================
+ *  PART A, STEP 4: THE DMA AND THE PING-PONG SWAP
+ *
+ *  CONCEPT
+ *    Three pieces.
+ *
+ *    StartDmaIntoBuffer(bufferIndex)
+ *        Tells DMA: "copy 64 results, one at a time, from the ADC result
+ *        register into this buffer."
+ *          DMA_PrepareTransfer      describes the job: source address, the
+ *                                   destination buffer, and the size.
+ *                                   kDMA_PeripheralToMemory means the data
+ *                                   flows from a peripheral into memory.
+ *          DMA_EnableCycleSteal     very important. It makes DMA move ONE
+ *                                   sample per ADC request. Without it,
+ *                                   DMA would race through the whole buffer
+ *                                   the instant the first request arrives,
+ *                                   copying the same single reading 64
+ *                                   times, defeating the point of the
+ *                                   timer.
+ *          DMA_EnableInterrupts     ring the CPU's doorbell when the whole
+ *                                   buffer is full
+ *
+ *    ConfigureDma
+ *        One-time setup. DMAMUX comes first because it connects "ADC0
+ *        finished a conversion" to DMA channel 0. Then start the first
+ *        transfer, into buffer 0, and switch on the DMA interrupt.
+ *
+ *    DMA0_IRQHandler
+ *        Runs each time a buffer is full. Order matters:
+ *          1. clear the "done" marker
+ *          2. flip g_fillIndex to the OTHER buffer
+ *          3. immediately start DMA into that other buffer
+ *          4. only then tell main() "the first buffer is ready"
+ *        Restarting DMA BEFORE handing off the finished buffer means there
+ *        is no gap in sampling. This chip's DMA has no automatic "chain to
+ *        the next buffer" feature (bigger chips do), so the swap is done
+ *        in software right here.
+ *
+ *  NEEDS: STEPS 1 to 3 already on. Safe to flash right away. Defined, not
+ *  run.
+ *
+ *  TRY IT
+ *    Turn the whole block on and build. That finishes the toolbox. In the
+ *    handler, find the one line that does the ping-pong flip:
+ *    g_fillIndex = 1U - g_fillIndex;  If it is 0, what does it become? If
+ *    it is 1?
+ *
+ *  NEXT: go to STEP 5 inside main().
+ * ========================================================================== */
+
+//void StartDmaIntoBuffer(uint8_t bufferIndex)
+//{
+//    DMA_PrepareTransfer(&g_transferConfig, (void *)ADC16_RESULT_REG_ADDR, sizeof(uint32_t),
+//                        (void *)g_pingPongBuffers[bufferIndex], sizeof(uint32_t), BUFFER_SAMPLES * sizeof(uint32_t),
+//                        kDMA_PeripheralToMemory);
+//
+//    DMA_SetTransferConfig(DEMO_DMA_BASEADDR, DEMO_DMA_CHANNEL, &g_transferConfig);
+//    DMA_EnableInterrupts(DEMO_DMA_BASEADDR, DEMO_DMA_CHANNEL);
+//    DMA_EnableAsyncRequest(DEMO_DMA_BASEADDR, DEMO_DMA_CHANNEL, true);
+//    DMA_EnableCycleSteal(DEMO_DMA_BASEADDR, DEMO_DMA_CHANNEL, true);
+//    DMA_StartTransfer(&g_dmaHandle);
+//}
+//
+//void ConfigureDma(void)
+//{
+//    DMAMUX_Init(DEMO_DMAMUX_BASEADDR);
+//    DMAMUX_SetSource(DEMO_DMAMUX_BASEADDR, DEMO_DMA_CHANNEL, kDmaRequestMux0ADC0);
+//    DMAMUX_EnableChannel(DEMO_DMAMUX_BASEADDR, DEMO_DMA_CHANNEL);
+//
+//    DMA_Init(DEMO_DMA_BASEADDR);
+//    DMA_CreateHandle(&g_dmaHandle, DEMO_DMA_BASEADDR, DEMO_DMA_CHANNEL);
+//
+//    g_fillIndex = 0U;
+//    StartDmaIntoBuffer(g_fillIndex);
+//
+//    NVIC_EnableIRQ(DMA0_IRQn);
+//}
+//
+//void DMA0_IRQHandler(void)
+//{
+//    uint8_t justFilled = g_fillIndex;
+//
+//    DMA_ClearChannelStatusFlags(DEMO_DMA_BASEADDR, DEMO_DMA_CHANNEL, kDMA_TransactionsDoneFlag);
+//
+//    g_fillIndex = 1U - g_fillIndex;
+//    StartDmaIntoBuffer(g_fillIndex);
+//
+//    g_readyIndex = (int32_t)justFilled;
+//    g_buffersCaptured++;
+//}
+
+
+
+
 
 int main(void)
 {
-    BOARD_InitPins();
-    BOARD_BootClockRUN();
-    BOARD_InitDebugConsole();
 
-    PRINTF("\r\n=== P3 DMA ping-pong reference (Session 1: raw dump only) ===\r\n");
-    PRINTF("Sampling ADC0_SE23 (PTE30) at %u Hz, %u samples per buffer.\r\n\r\n", SAMPLE_RATE_HZ, BUFFER_SAMPLES);
+    /* ======================================================================
+     *  PART B, STEP 5: WAKE UP THE BOARD
+     *
+     *  CONCEPT
+     *    Three setup calls run once, in this order, before anything else:
+     *
+     *      BOARD_InitPins()          decide what each pin does
+     *      BOARD_BootClockRUN()      start the clock (the chip's heartbeat)
+     *      BOARD_InitDebugConsole()  open the serial line to your computer
+     *
+     *    Then two PRINTF lines say what we are about to do.
+     *
+     *  NEEDS: STEP 1 already on (for the numbers printed). Safe to flash
+     *  right away.
+     *
+     *  TRY IT
+     *    Turn the whole block on, flash, and open the terminal. You should
+     *    see the title and "10000 Hz, 64 samples per buffer".
+     *
+     *  NEXT: go to STEP 6.
+     * ==================================================================== */
 
-    /*
-     * WHAT: Brings up the whole pipeline in a specific order.
-     * WHY: ConfigureTpmTrigger() runs LAST, deliberately, same reasoning as
-     * P1 dashboard's InitPitTick(): TPM0 is the piece that actually starts
-     * triggering conversions, so the ADC, its hardware-trigger routing, and
-     * DMA must all already be fully configured and armed before that first
-     * trigger can possibly arrive.
-     */
-    ConfigureAdc();
-    ConfigureAdcHardwareTrigger();
-    ConfigureDma();
-    ConfigureTpmTrigger(); /* start sampling last, once every downstream piece is ready */
+    //BOARD_InitPins();
+    //BOARD_BootClockRUN();
+    //BOARD_InitDebugConsole();
+    //
+    //PRINTF("\r\n=== P3 DMA ping-pong (raw dump only) ===\r\n");
+    //PRINTF("Sampling ADC0_SE23 (PTE30) at %u Hz, %u samples per buffer.\r\n\r\n", SAMPLE_RATE_HZ, BUFFER_SAMPLES);
 
-    /*
-     * WHAT: Waits for a full buffer to be ready, then prints its first 8
-     * raw samples.
-     * HOW: Checks g_readyIndex (set by DMA0_IRQHandler) every pass; when a
-     * buffer is ready, immediately clears the flag back to -1 (so the same
-     * buffer isn't printed twice) before touching the buffer's contents.
-     * WHY: main() here does almost nothing, on purpose: it's proof that the
-     * acquisition pipeline runs entirely on its own. Printing only 8 of the
-     * 64 samples (not all of them) keeps this demo's UART output readable;
-     * Session 2's full pipeline instead processes and streams every sample
-     * through a FIR filter.
-     */
-    for (;;)
-    {
-        if (g_readyIndex >= 0)
-        {
-            int32_t index = g_readyIndex;
-            uint32_t i;
-            uint32_t *buf;
 
-            g_readyIndex = -1;
-            buf = g_pingPongBuffers[index];
 
-            PRINTF("buffer %d ready (capture #%u), first 8 raw samples: ", index, g_buffersCaptured);
-            for (i = 0U; i < 8U; i++)
-            {
-                PRINTF("%u ", buf[i]);
-            }
-            PRINTF("\r\n");
-        }
-    }
+
+
+    /* ======================================================================
+     *  PART B, STEP 6: SET UP THE ADC
+     *
+     *  CONCEPT
+     *    Calls the two ADC functions from STEP 2. The ADC is now ready and
+     *    listening for the timer. The timer has not started yet, so no
+     *    measurements are taken.
+     *
+     *  NEEDS: STEPS 1, 2 and 5 already on. Safe to flash right away.
+     *
+     *  TRY IT
+     *    Turn this on and flash. Nothing new appears. The ADC is armed and
+     *    waiting.
+     *
+     *  NEXT: go to STEP 7.
+     * ==================================================================== */
+
+    //ConfigureAdc();
+    //ConfigureAdcHardwareTrigger();
+
+
+
+
+
+    /* ======================================================================
+     *  PART B, STEP 7: SET UP THE DMA
+     *
+     *  CONCEPT
+     *    Calls ConfigureDma() from STEP 4. DMA is now armed and waiting for
+     *    ADC requests. It will copy each result into buffer A as soon as
+     *    they arrive.
+     *
+     *  NEEDS: STEPS 1 to 6 already on. Safe to flash right away.
+     *
+     *  TRY IT
+     *    Turn this on and flash. Still nothing new. DMA is waiting for the
+     *    ADC, and the ADC is waiting for the timer.
+     *
+     *  NEXT: go to STEP 8.
+     * ==================================================================== */
+
+    //ConfigureDma();
+
+
+
+
+
+    /* ======================================================================
+     *  PART B, STEP 8: START THE TIMER, LAST
+     *
+     *  CONCEPT
+     *    ConfigureTpmTrigger() is deliberately the LAST setup call. It is
+     *    the one that actually starts the pipeline. Once the timer ticks,
+     *    the ADC measures and DMA copies, immediately. So the ADC, the
+     *    trigger wiring, and DMA must ALL be ready first. This is the same
+     *    "start the heartbeat last" rule you saw in P1 Demo 7.
+     *
+     *    From this line on, the pipeline runs entirely by itself. The CPU
+     *    is not involved in taking a single sample.
+     *
+     *  NEEDS: STEPS 1 to 7 already on. Safe to flash right away.
+     *
+     *  TRY IT
+     *    Turn this on and flash. The pipeline is running, and buffers are
+     *    filling about 156 times a second. But nothing reads them yet, so
+     *    you still see nothing new. STEP 9 fixes that.
+     *
+     *  NEXT: go to STEP 9.
+     * ==================================================================== */
+
+    //ConfigureTpmTrigger();
+
+
+
+
+
+    /* ======================================================================
+     *  PART B, STEP 9: LOOK AT WHAT WAS CAPTURED
+     *
+     *  CONCEPT
+     *    This loop checks g_readyIndex. When a buffer is ready, it:
+     *      1. copies the index and sets g_readyIndex back to -1, so the
+     *         same buffer is not printed twice
+     *      2. looks up which buffer that is
+     *      3. prints the buffer number, how many buffers have been
+     *         captured, and the first 8 raw samples
+     *
+     *    Only 8 of 64 are printed to keep the output readable. 156 buffers
+     *    a second is far too fast to read, but you will see them scroll.
+     *
+     *    main() does almost nothing here, on purpose. That is the point:
+     *    the pipeline runs on its own.
+     *
+     *    About the numbers: the ADC gives a 16-bit value, 0 to 65535, where
+     *    0 is 0 volts and 65535 is 3.3 volts. So 32768 is about 1.65 volts.
+     *
+     *  NEEDS: STEPS 1 to 8 already on. Safe to flash right away.
+     *
+     *  TRY IT
+     *    Turn this on and flash. Lines of numbers scroll quickly. Leave
+     *    PTE30 unconnected and the numbers wander. Touch PTE30 with a
+     *    finger and watch them move. Connect a potentiometer and turn it
+     *    slowly. The numbers should rise and fall smoothly.
+     *
+     *  NEXT: go to the exercises below.
+     * ==================================================================== */
+
+    //for (;;)
+    //{
+    //    if (g_readyIndex >= 0)
+    //    {
+    //        int32_t index = g_readyIndex;
+    //        uint32_t i;
+    //        uint32_t *buf;
+    //
+    //        g_readyIndex = -1;
+    //        buf = g_pingPongBuffers[index];
+    //
+    //        PRINTF("buffer %d ready (capture #%u), first 8 raw samples: ", index, g_buffersCaptured);
+    //
+    //        for (i = 0U; i < 8U; i++)
+    //        {
+    //            PRINTF("%u ", buf[i]);
+    //        }
+    //
+    //        PRINTF("\r\n");
+    //    }
+    //}
+
 }
+
+
+
+
+
+/* ==========================================================================
+ *  EXERCISES
+ *
+ *  1. Check the timing (STEP 1 question). One buffer holds 64 samples at
+ *     10,000 per second: 64 / 10000 = 0.0064 seconds, or 6.4 ms. So about
+ *     156 buffers a second. Now look at the "capture #" number on screen.
+ *     Does it climb by roughly that much per second?
+ *
+ *  2. Change the sample rate. In STEP 1 change SAMPLE_RATE_HZ to 2000.
+ *     Flash. The capture number should climb about five times slower. Try
+ *     20000. Does the pipeline keep up? (If the printing cannot keep up,
+ *     what will happen to the data you see?)
+ *
+ *  3. Change the buffer size. In STEP 1 change BUFFER_SAMPLES from 64U to
+ *     128U. Does everything still work? What happens to the time one
+ *     buffer takes to fill?
+ *
+ *  4. Show more samples. In STEP 9 change the 8U in the "for" loop to 16U.
+ *
+ *  5. Watch a real signal. Connect a potentiometer's middle leg to PTE30
+ *     (outer legs to 3.3V and GND). Turn it slowly from one end to the
+ *     other. Do the numbers span about 0 to 65535?
+ *
+ *  6. Break it on purpose (predict first!). In STEP 4, comment out the
+ *     DMA_EnableCycleSteal line. Before you flash, predict what the 8
+ *     printed samples will look like, and why. Then flash and check your
+ *     prediction. Put the line back afterward.
+ *
+ *  WHERE TO GO NEXT
+ *    Demo 2: apply a digital filter (FIR) to clean up the captured
+ *    signal, and plot it live on your computer.
+ * ========================================================================== */

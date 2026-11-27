@@ -1,32 +1,41 @@
 # P3 Demo Code
 
-Reference material only. Try building each stage yourself from the Project Manual first;
-open these only if you get stuck and can't figure out why.
+These are **step-by-step code files**, not answer keys. The code is already in each file, but
+switched off (commented out). You switch it on one step at a time, run it on the board, and do
+a small exercise. All the explanation is written inside the file itself.
 
-- `01_dma_adc_ping_pong/`: Session 1. TPM0 triggers the ADC in hardware at 10 kHz; DMA moves
-  every result straight into RAM with zero CPU involvement; `DMA0_IRQHandler` alternates
-  between two buffers (software-managed ping-pong, since this chip's DMA has no built-in
-  scatter-gather). `main()` just dumps the first few raw samples of each completed buffer over
-  UART, to prove the pipeline is really running continuously. No filtering yet.
+## How to use a demo
 
-- `02_full_pipeline_with_fir/`: Session 2. Same acquisition pipeline, plus an 8-tap Q15
-  fixed-point FIR low-pass filter applied to each completed buffer, and a decimated
-  `raw,filtered` CSV stream over UART. `python/plot_fir_demo.py` reads that stream and plots
-  both signals live, side by side.
+1. Create a new project with the SDK wizard. The P0 manual, Section 9, Step 1, shows exactly how.
+2. Open the demo's `main.c`, copy everything, and paste it over your project's main source file.
+3. Replace your project's `pin_mux.c` with the `pin_mux.c` in the same demo folder. If you forget
+   this step the program may still build and run, but the analog input may not be set up.
+4. Read the first step in the file, select its grey `//` lines, and press **Cmd + /** (Mac) or
+   **Ctrl + /** (Windows) to turn them on. Build, flash, and watch the terminal. Do the
+   exercise and move to the next step.
 
-**Both firmware projects were compiled and checked, not just written.** They build cleanly
-against `SDK_2_2_0_FRDM-KL26Z` (17 KB and 17.5 KB of the 128 KB flash budget respectively,
-comfortably under), and every DMA/ADC/TPM register value was verified against either a working
-NXP SDK example (`demo_apps/adc16_low_power_async_dma`) or the chip's own register-description
-file (`MKL26Z4.xml`), not guessed. Neither has been flashed to physical hardware; a project
-leader must bench-test both on a real board (with an actual potentiometer or other analog
-source wired to PTE30, see the manual, Section 4) before WS6/WS7.
+Lines inside `/* ... */` boxes are explanation. Leave them alone.
 
-The Python script's CSV-parsing and rolling-window logic was unit-tested standalone (its
-`matplotlib` dependency isn't installed in the environment this was written in, so the plotting
-itself couldn't be smoke-tested end to end); install `pyserial` and `matplotlib` before running
-it (`pip3 install pyserial matplotlib`).
+## What is here
 
-To build the firmware, see the P0 manual, Section 8, for the general `cmake` / `make` /
-`objcopy` flow; each `armgcc/` folder here already has its build scripts patched for this
-repository's folder layout, the same fixes every prior project's combined reference has needed.
+- `01_dma_adc_ping_pong/main.c`: Session 1. 9 steps. A timer triggers the ADC in hardware at
+  10 kHz, DMA moves every result into RAM with no CPU involvement, and two buffers alternate
+  (software ping-pong, because this chip's DMA has no built-in scatter-gather). The first 4
+  steps build the pieces, the last 5 start them and print what was captured.
+- `02_full_pipeline_with_fir/main.c`: Session 2. **The Demo 1 pipeline is already switched on
+  in this file**, because you just built it. Only the filter is switched off, in 3 steps: the
+  8-tap Q15 fixed-point FIR coefficients, the filter function, and the call that turns it on.
+  - `python/plot_fir_demo.py` reads the `raw,filtered` stream and plots both signals live. Install
+    `pyserial` and `matplotlib` first (`pip3 install pyserial matplotlib`).
+
+You need an analog signal on PTE30: a potentiometer (about $1) or the on-board ambient light
+sensor. See the manual, Section 4.
+
+## For project leaders
+
+- The steps have not yet been built and flashed one by one on real hardware. The DMA, ADC and
+  timer register values were checked against a working NXP example
+  (`demo_apps/adc16_low_power_async_dma`) and the chip's register description file in the
+  earlier version. Please bench-test both demos with a real analog source before the session.
+- The Python script's CSV parsing was unit-tested standalone, but its live plot has not been
+  smoke-tested end to end.

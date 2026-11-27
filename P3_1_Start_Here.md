@@ -25,7 +25,7 @@ Section numbers (0-19) are kept consistent across all 4 files, so "see Section 9
 
 ## How to Use This Manual
 
-Same rule as every prior manual: a reference, not required reading. Build each stage hands-on and open this only when stuck.
+**Your main guide is the code files in `demo_code/` (01, then 02).** Each is a step-by-step file with the explanation written inside it; setup is in `P3_3_Setup_and_Walkthrough.md`. This manual is a reference, not required reading: open it when something doesn't make sense.
 
 Project leaders: bench-test both `demo_code/01_dma_adc_ping_pong/` and `demo_code/02_full_pipeline_with_fir/` on a real board before WS6 and WS7, with an actual potentiometer wired to PTE30 (Section 4). This project's failure modes are quieter than P2's, a misconfigured trigger source doesn't hard-fault, it just silently produces flat or garbage data, so seeing it work correctly once, on real hardware, before the session matters more here than the raw difficulty might suggest.
 

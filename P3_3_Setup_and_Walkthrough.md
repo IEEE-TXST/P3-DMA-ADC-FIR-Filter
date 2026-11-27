@@ -2,7 +2,9 @@
 
 *Part of the P3 manual split. See `P3_1_Start_Here.md` for the full file list and how to use this manual.*
 
-**Before you start writing code:** create one new project for this entire project, via MCUXpresso's SDK wizard (P0 manual, Section 9): device `MKL26Z128VLH4`, board files = **Default board files**, project type = **C Project**, SDK Debug Console = **UART**. Every `demo_code/` folder mentioned below is something to read and copy logic from, never something to build on its own; a wizard-created project gives you MCUXpresso's normal managed build (no CMake, no `armgcc`, no relative-path setup), the same smooth build experience as any other wizard project in this series.
+**How this project works now: the code files guide you.** Each demo in `demo_code/` (01, then 02) is a step-by-step file with the explanation written inside it; the sections below are background and a fallback if you get stuck.
+
+**Setup, once:** create one new project via MCUXpresso's SDK wizard (P0 manual, Section 9, Step 1): device `MKL26Z128VLH4`, board files = **Default board files**, project type = **C Project**, SDK Debug Console = **UART**. For each demo, (1) paste its `main.c` over your project's main source file, (2) replace your project's `pin_mux.c` with the one from that demo's folder (the wizard's own only sets up the serial pins, so skipping this can leave the analog input unconfigured), and (3) follow the steps inside the file. Demo 02 already has the Demo 01 sampling pipeline switched on, so you only add the filter.
 
 ---
 
