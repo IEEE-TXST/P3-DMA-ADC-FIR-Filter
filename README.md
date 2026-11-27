@@ -27,7 +27,8 @@ DMA filling ping-pong buffers at 10 kHz with zero CPU polling. FIR filter applie
 
 ## Repo layout
 
-- `P3_1_Start_Here.md` through `P3_4_Reference.md`: the Project Manual, split into four files.
+- [`P3_Project_Manual.pdf`](P3_Project_Manual.pdf): the whole Project Manual in one file, for reading or printing.
+- [`docs/`](docs/): the same manual as four Markdown files, `P3_1_Start_Here.md` through `P3_4_Reference.md`.
 - `demo_code/01_dma_adc_ping_pong/`: TPM-triggered ADC conversions moved into RAM by DMA, ping-ponging between two buffers, no filtering yet.
 - `demo_code/02_full_pipeline_with_fir/`: the same acquisition pipeline plus the 8-tap Q15 FIR low-pass filter and a decimated raw/filtered UART stream.
   - `python/plot_fir_demo.py`: live matplotlib plot of raw vs. filtered signal.
@@ -35,7 +36,9 @@ DMA filling ping-pong buffers at 10 kHz with zero CPU polling. FIR filter applie
 
 ## Getting started
 
-Read `P3_1_Start_Here.md` first, then `P3_3_Setup_and_Walkthrough.md`. Get Session 1's ping-pong acquisition working and understood before moving to the FIR filter.
+**Manual:** [open the PDF](P3_Project_Manual.pdf), or [read it here on GitHub](docs/P3_1_Start_Here.md).
+
+Read [`P3_1_Start_Here.md`](docs/P3_1_Start_Here.md) first, then [`P3_3_Setup_and_Walkthrough.md`](docs/P3_3_Setup_and_Walkthrough.md). Get Session 1's ping-pong acquisition working and understood before moving to the FIR filter.
 
 ## Resume line
 

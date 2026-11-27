@@ -4,7 +4,7 @@
 **Document status:** DRAFT v0.1, for project-leader review and bench testing before member use
 **Track:** Embedded Systems | **Difficulty:** Advanced | **Sessions:** 2 (WS6, Oct 22 and WS7, Oct 29, 2026), with pre-reading assigned Oct 15
 **Applies to:** All 8 groups (24 members)
-**Companion documents:** P0's manual (`P0_Board_Orientation_and_Toolchain_Setup/`, start at `P0_1_Start_Here.md`), P1's manual (`P1_Sensor_Dashboard/`), P2's manual (`P2_Cooperative_Task_Scheduler/`) (read all three first), *TXST IEEE FRDM-KL26Z Project Specification*
+**Companion documents:** P0's manual (`P0_Board_Orientation_and_Toolchain_Setup/docs/`, start at `P0_1_Start_Here.md`), P1's manual (`P1_Sensor_Dashboard/`), P2's manual (`P2_Cooperative_Task_Scheduler/`) (read all three first), *TXST IEEE FRDM-KL26Z Project Specification*
 **Hardware:** FRDM-KL26Z plus a potentiometer (roughly $1) wired to PTE30, or the on-board ADC header pin left floating for a noisier demo
 **Demo code:** see `demo_code/` in this project's folder
 
